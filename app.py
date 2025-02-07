@@ -1,7 +1,6 @@
-import time
-import threading
 import feedparser
 import requests
+import time
 from flask import Flask, render_template
 
 app = Flask(__name__)
@@ -24,74 +23,106 @@ subreddits_and_sites = {
     "aljazeera": "https://www.aljazeera.com/xml/rss/all.xml"
 }
 
-# Store the latest posts globally
-latest_posts = {}
-
+# Function to fetch posts from the RSS feed with delay and debug logging
 def fetch_posts(feed_url):
-    headers = {"User-Agent": "Mozilla/5.0"}
-    try:
-        response = requests.get(feed_url, headers=headers, timeout=10)
-        response.raise_for_status()
-    except requests.RequestException as e:
-        print(f"Failed to fetch {feed_url}: {e}")
-        return []
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
-    feed = feedparser.parse(response.content)
-    return [{"title": entry.title, "link": entry.link} for entry in feed.entries[:5]]
-
-def update_posts():
-    global latest_posts
-    while True:
-        print("Fetching latest posts...")
-        latest_posts = {name: fetch_posts(url) for name, url in subreddits_and_sites.items()}
-        time.sleep(3600)  # Refresh every 1 hour
-
-@app.route('/')
-def index():
-    if not latest_posts:
-        return "No posts available yet. Try again later."
+    time.sleep(2)  # Add delay between requests to prevent blocking
+    response = requests.get(feed_url, headers=headers)
     
-    html_content = f"""
+    print(f"Fetching: {feed_url} - Status Code: {response.status_code}")  # Debug log
+
+    if response.status_code != 200:
+        return []  # Return empty list if request fails
+
+    # Parse the RSS feed
+    feed = feedparser.parse(response.content)
+    
+    posts = [{"title": entry.title, "link": entry.link} for entry in feed.entries[:5]]
+    
+    return posts
+
+# HTML Template for rendering posts
+def generate_html(subreddit_posts):
+    html_content = """
     <html>
     <head>
         <style>
-            body {{
+            body {
                 font-family: Arial, sans-serif;
-                background-color: #000;
-                color: #fff;
+                background-color: #000000;
+                color: #ffffff;
                 text-align: center;
+                margin: 0;
                 padding: 20px;
-            }}
-            .container {{
+            }
+            .container {
                 background-color: #1e1e1e;
                 padding: 20px;
                 border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
                 width: 80%;
                 max-width: 800px;
-                margin: auto;
-            }}
-            h1 {{ color: #ffcc00; }}
-            h2 {{ color: #ffcc00; }}
-            a {{ color: #00FF00; text-decoration: none; }}
-            a:hover {{ text-decoration: underline; }}
+                margin: 0 auto;
+            }
+            h1 {
+                font-size: 2em;
+                margin-bottom: 20px;
+            }
+            h2 {
+                font-size: 1.5em;
+                margin-top: 20px;
+                color: #ffcc00;
+            }
+            .post {
+                margin: 10px 0;
+                font-size: 1.1em;
+            }
+            a {
+                color: #00FF00;
+                text-decoration: none;
+            }
+            a:hover {
+                text-decoration: underline;
+            }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Top Posts of the Week</h1>
-    """
+            """
 
-    for site, posts in latest_posts.items():
-        html_content += f"<h2>{site}</h2>"
+    # Loop through each subreddit/website and add its posts
+    for subreddit_or_site, posts in subreddit_posts.items():
+        html_content += f"<h2>{subreddit_or_site}</h2>"
         for post in posts:
-            html_content += f'<p><a href="{post["link"]}" target="_blank">{post["title"]}</a></p>'
+            html_content += f'<div class="post"><a href="{post["link"]}" target="_blank">{post["title"]}</a></div>'
 
-    html_content += "</div></body></html>"
+    html_content += """
+        </div>
+    </body>
+    </html>
+    """
+    return html_content
+
+@app.route('/')
+def index():
+    subreddit_posts = {}
+
+    # Fetch top posts from each subreddit or website
+    for name, feed_url in subreddits_and_sites.items():
+        posts = fetch_posts(feed_url)
+        subreddit_posts[name] = posts
+
+    # Check if any posts were fetched
+    if not any(subreddit_posts.values()):
+        return "No posts found. Reddit or websites may be blocking the request. Check logs for status codes."
+
+    # Generate and return the HTML content
+    html_content = generate_html(subreddit_posts)
     return html_content
 
 if __name__ == '__main__':
-    # Start background thread for fetching posts
-    thread = threading.Thread(target=update_posts, daemon=True)
-    thread.start()
-    
-    app.run(host='0.0.0.0', port=10000)
+    app.run(host='0.0.0.0', debug=True)
