@@ -1,3 +1,5 @@
+import time
+import threading
 import feedparser
 import requests
 from flask import Flask, render_template
@@ -15,110 +17,81 @@ subreddits_and_sites = {
     "geopolitics": "https://www.reddit.com/r/geopolitics/top/.rss?t=week",
     "bestof": "https://www.reddit.com/r/bestof/top/.rss?t=week",
     "truereddit": "https://www.reddit.com/r/truereddit/top/.rss?t=week",
-    "thenation": "https://www.thenation.com/feed/?post_type=article&subject=politics",  # Updated RSS feed
+    "thenation": "https://www.thenation.com/feed/?post_type=article&subject=politics",
     "muslimskeptic": "https://muslimskeptic.com/feed/",
     "theintercept": "https://theintercept.com/feed/",
     "slashdot": "http://rss.slashdot.org/Slashdot/slashdotMain",
     "aljazeera": "https://www.aljazeera.com/xml/rss/all.xml"
 }
 
-# Function to fetch posts from the RSS feed
+# Store the latest posts globally
+latest_posts = {}
+
 def fetch_posts(feed_url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-    }
-    response = requests.get(feed_url, headers=headers)
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        response = requests.get(feed_url, headers=headers, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as e:
+        print(f"Failed to fetch {feed_url}: {e}")
+        return []
 
-    # Parse the RSS feed
     feed = feedparser.parse(response.content)
+    return [{"title": entry.title, "link": entry.link} for entry in feed.entries[:5]]
 
-    posts = []
-    for entry in feed.entries[:5]:  # Display the first 5 headlines
-        title = entry.title
-        link = entry.link
-        posts.append({"title": title, "link": link})
+def update_posts():
+    global latest_posts
+    while True:
+        print("Fetching latest posts...")
+        latest_posts = {name: fetch_posts(url) for name, url in subreddits_and_sites.items()}
+        time.sleep(3600)  # Refresh every 1 hour
 
-    return posts
-
-# HTML Template for rendering posts
-def generate_html(subreddit_posts):
-    html_content = """
+@app.route('/')
+def index():
+    if not latest_posts:
+        return "No posts available yet. Try again later."
+    
+    html_content = f"""
     <html>
     <head>
         <style>
-            body {
+            body {{
                 font-family: Arial, sans-serif;
-                background-color: #000000;  /* Black background */
-                color: #ffffff;  /* White text */
+                background-color: #000;
+                color: #fff;
                 text-align: center;
-                margin: 0;
                 padding: 20px;
-            }
-            .container {
-                background-color: #1e1e1e;  /* Dark gray container */
+            }}
+            .container {{
+                background-color: #1e1e1e;
                 padding: 20px;
                 border-radius: 8px;
-                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
                 width: 80%;
                 max-width: 800px;
-                margin: 0 auto;
-            }
-            h1 {
-                font-size: 2em;
-                margin-bottom: 20px;
-            }
-            h2 {
-                font-size: 1.5em;
-                margin-top: 20px;
-                color: #ffcc00;  /* Yellow for subreddit titles */
-            }
-            .post {
-                margin: 10px 0;
-                font-size: 1.1em;
-            }
-            a {
-                color: #00FF00;  /* Green links */
-                text-decoration: none;
-            }
-            a:hover {
-                text-decoration: underline;
-            }
+                margin: auto;
+            }}
+            h1 {{ color: #ffcc00; }}
+            h2 {{ color: #ffcc00; }}
+            a {{ color: #00FF00; text-decoration: none; }}
+            a:hover {{ text-decoration: underline; }}
         </style>
     </head>
     <body>
         <div class="container">
             <h1>Top Posts of the Week</h1>
-            """
-
-    # Loop through each subreddit/website and add its posts
-    for subreddit_or_site, posts in subreddit_posts.items():
-        html_content += f"<h2>{subreddit_or_site}</h2>"
-        for post in posts:
-            html_content += f'<div class="post"><a href="{post["link"]}" target="_blank">{post["title"]}</a></div>'
-
-    html_content += """
-        </div>
-    </body>
-    </html>
     """
-    return html_content
 
-@app.route('/')
-def index():
-    subreddit_posts = {}
+    for site, posts in latest_posts.items():
+        html_content += f"<h2>{site}</h2>"
+        for post in posts:
+            html_content += f'<p><a href="{post["link"]}" target="_blank">{post["title"]}</a></p>'
 
-    # Fetch top posts from each subreddit or website
-    for name, feed_url in subreddits_and_sites.items():
-        posts = fetch_posts(feed_url)
-        subreddit_posts[name] = posts
-
-    # Check if any posts were fetched
-    if not any(subreddit_posts.values()):
-        return "No posts found. Reddit or websites may be blocking the request."
-
-    # Generate and return the HTML content
-    html_content = generate_html(subreddit_posts)
+    html_content += "</div></body></html>"
     return html_content
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', debug=True)
+    # Start background thread for fetching posts
+    thread = threading.Thread(target=update_posts, daemon=True)
+    thread.start()
+    
+    app.run(host='0.0.0.0', port=10000)
